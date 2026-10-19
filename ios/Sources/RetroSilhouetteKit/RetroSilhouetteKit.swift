@@ -259,6 +259,7 @@ public final class RetroEurodanceAudioController {
     private var leadPhase1: Double = 0
     private var leadPhase2: Double = 0
     private var lastBassCutTime: TimeInterval = 0
+    private var samplesSinceUpdate = 0
 
     private let bassSteps: [Int?] = [
         33, 45, 33, 45, 33, 45, 33, 45,
@@ -498,6 +499,11 @@ public final class RetroEurodanceAudioController {
         let normAmp = min(1.0, max(0.0, rms * 2.6))
         let bassEnergy: Float = bassTriggerOccurred ? 0.95 : normAmp * 0.7
 
+        // The callbacks drive the picture (about 30 to 60 frames per second): send them on each beat and at most
+        // every 20 ms, not on each audio block (a call's audio thread pulls 100 blocks per second).
+        samplesSinceUpdate += frameCount
+        guard bassTriggerOccurred || Double(samplesSinceUpdate) >= sampleRate * 0.02 else { return }
+        samplesSinceUpdate = 0
         DispatchQueue.main.async { [weak self] in
             if bassTriggerOccurred {
                 self?.onBassBeatTrigger?()
@@ -934,8 +940,18 @@ public final class RetroSilhouetteEngine: NSObject, ObservableObject {
 
         let srcW = CVPixelBufferGetWidth(pixelBuffer)
         let srcH = CVPixelBufferGetHeight(pixelBuffer)
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
-        guard let baseAddr = CVPixelBufferGetBaseAddress(pixelBuffer) else {
+        // BGRA (the built-in camera), or bi-planar YUV 4:2:0 (WebRTC, AVPlayer): the Y plane is the luma.
+        let format = CVPixelBufferGetPixelFormatType(pixelBuffer)
+        let isBiPlanarYUV = format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+            || format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        let isVideoRange = format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        let bytesPerRow = isBiPlanarYUV
+            ? CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0)
+            : CVPixelBufferGetBytesPerRow(pixelBuffer)
+        let base = isBiPlanarYUV
+            ? CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0)
+            : CVPixelBufferGetBaseAddress(pixelBuffer)
+        guard let baseAddr = base, isBiPlanarYUV || format == kCVPixelFormatType_32BGRA else {
             return [UInt8](repeating: 0, count: targetWidth * targetHeight)
         }
         let srcPtr = baseAddr.assumingMemoryBound(to: UInt8.self)
@@ -957,12 +973,18 @@ public final class RetroSilhouetteEngine: NSObject, ObservableObject {
                 let normX = mirror ? (1.0 - rawNormX) : rawNormX
                 let srcX = min(srcW - 1, max(0, Int(normX * Double(srcW))))
 
-                let px = srcRow + srcX * 4
-                let b = Int(srcPtr[px + 0])
-                let g = Int(srcPtr[px + 1])
-                let r = Int(srcPtr[px + 2])
-
-                let luma = (77 * r + 150 * g + 29 * b) >> 8
+                let luma: Int
+                if isBiPlanarYUV {
+                    let y = Int(srcPtr[srcRow + srcX])
+                    // Video range is Y 16...235: stretch it to 0...255, as full range and BGRA are.
+                    luma = isVideoRange ? min(255, max(0, (y - 16) * 255 / 219)) : y
+                } else {
+                    let px = srcRow + srcX * 4
+                    let b = Int(srcPtr[px + 0])
+                    let g = Int(srcPtr[px + 1])
+                    let r = Int(srcPtr[px + 2])
+                    luma = (77 * r + 150 * g + 29 * b) >> 8
+                }
                 let isForeground = invert ? (luma > threshInt) : (luma < threshInt)
                 if isForeground {
                     mask[maskRow + x] = 255

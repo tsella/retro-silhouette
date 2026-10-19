@@ -19,7 +19,7 @@ This project is directly inspired by the legendary **1992 Amiga demoscene produc
 Located in `ios/Sources/RetroSilhouetteKit/RetroSilhouetteKit.swift`, **RetroSilhouetteKit** is a zero-dependency, real-time video and audio processing library for iOS 15+.
 
 ### Features
-* **Live Camera or Custom Video Input:** Use the built-in `AVCaptureSession` camera manager (`startCamera()`) or feed custom `CMSampleBuffer` / `CVPixelBuffer` streams from `AVPlayer`, ReplayKit, or WebRTC.
+* **Live Camera or Custom Video Input:** Use the built-in `AVCaptureSession` camera manager (`startCamera()`) or feed custom `CMSampleBuffer` / `CVPixelBuffer` streams from `AVPlayer`, ReplayKit, or WebRTC. Input frames can be BGRA or bi-planar YUV 4:2:0 (`420f`, `420v`; the Y plane is the luma).
 * **Built-In 90s Eurodance Synth or External Audio Tap:** Includes a procedural 138 BPM 64-step `AVAudioEngine` synthesizer, or accepts external `AVAudioPCMBuffer` streams to drive bass cuts and amplitude layer scaling.
 * **Full Configuration API:** Programmatically control pixel resolution, echo trail count, frame delay offsets, luma threshold cutoff, mask inversion, horizontal mirroring, dynamic camera zoom cuts, and MPEG blocky gradient artifacts.
 * **Real-Time Output Streams:** Receive processed `CVPixelBuffer` and `CGImage` frames via delegate callbacks, closures, or Combine `@Published` properties for recording (`AVAssetWriter`), streaming, or custom rendering.
