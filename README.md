@@ -26,6 +26,8 @@ This project is directly inspired by the legendary **1992 Amiga demoscene produc
     └── Sources/
         └── RetroSilhouetteKit/
             └── RetroSilhouetteKit.swift   # Self-contained iOS Swift library (SwiftUI + UIKit + CoreVideo)
+    └── Tests/
+        └── RetroSilhouetteKitTests/       # XCTest: the external synth
 ```
 
 *(Future platform implementations such as `android/`, `web/`, or `desktop/` can be added cleanly at the root level alongside `ios/`.)*
@@ -137,6 +139,28 @@ config.blockyGradientArtifacts = true  // Macroblock noise on gradient backgroun
 config.bassCutSensitivity = 0.62       // External audio bass threshold (0.0...1.0)
 
 let engine = RetroSilhouetteEngine(configuration: config)
+```
+
+### 4. Music inside an app that owns the audio session (for example a call app)
+
+The built-in synth sets the shared `AVAudioSession` to `.playback`, which cuts the mic of an app in `.playAndRecord`. Such an app can pull the music instead and mix it into its own audio:
+
+```swift
+engine.audioController.managesAudioSession = false   // never touch AVAudioSession
+engine.startExternalMusic(sampleRate: 48_000)        // no audio engine of its own
+
+// In the app's audio callback, for each block of `frames` samples:
+engine.renderMusic(into: monoFloatSamples, frameCount: frames)   // -1...1; silence when the music is off
+
+engine.stopMusic()
+```
+
+The beat cuts and the amplitude-scaled trail layers follow the pulled music, as with the internal synth.
+
+### Tests
+
+```bash
+xcodebuild test -scheme RetroSilhouetteKit -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 ```
 
 ---

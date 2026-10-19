@@ -282,12 +282,51 @@ public final class RetroEurodanceAudioController {
         [65, 72], [67, 74], [69, 76], [71, 79], [72, 81], [72, 81], [76, 84], nil
     ]
 
+    /// When false, the controller never changes the shared `AVAudioSession`. Set it to false in an app that owns
+    /// the session, for example a call app in `.playAndRecord`: `.playback` would cut its mic.
+    public var managesAudioSession: Bool = true
+
+    /// True while a caller pulls the synth's samples (`startExternalSynth`), with no audio engine of its own.
+    public private(set) var isRenderingExternally: Bool = false
+
     public init() {}
 
     public func configureAudioSession() throws {
+        guard managesAudioSession else { return }
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
         try session.setActive(true)
+    }
+
+    /// Starts the synth with no audio engine: the caller pulls mono samples with `renderExternalSynth` at
+    /// `sampleRate` (for example from a call's audio callback, to mix the music into the call). It never touches
+    /// the audio session. The beat and amplitude callbacks run as with the internal synth.
+    public func startExternalSynth(sampleRate: Double) {
+        if isPlaying { return }
+        self.sampleRate = sampleRate > 0 ? sampleRate : 48000.0
+        sampleCounter = 0
+        lastTriggeredStep = -1
+        isRenderingExternally = true
+        isPlaying = true
+    }
+
+    /// Writes the next `frameCount` mono samples (-1...1) to `samples`. Silence when the external synth is off.
+    /// Call it from one thread at a time (an audio callback).
+    public func renderExternalSynth(into samples: UnsafeMutablePointer<Float>, frameCount: Int) {
+        guard isRenderingExternally, frameCount > 0 else {
+            samples.update(repeating: 0, count: max(0, frameCount))
+            return
+        }
+        renderMono(into: samples, frameCount: frameCount)
+    }
+
+    public func stopExternalSynth() {
+        guard isRenderingExternally else { return }
+        isRenderingExternally = false
+        isPlaying = false
+        DispatchQueue.main.async { [weak self] in
+            self?.onAmplitudeUpdate?(0.0, 0.0)
+        }
     }
 
     public func startInternalSynth() throws {
@@ -316,7 +355,7 @@ public final class RetroEurodanceAudioController {
     }
 
     public func stopInternalSynth() {
-        guard isPlaying else { return }
+        guard isPlaying, !isRenderingExternally else { return }
         audioEngine.stop()
         isPlaying = false
         DispatchQueue.main.async { [weak self] in
@@ -369,15 +408,32 @@ public final class RetroEurodanceAudioController {
         return 440.0 * pow(2.0, Double(midi - 69) / 12.0)
     }
 
+    /// The internal engine's node: one mono render, copied to each output buffer (channel).
     private func renderSynthFrames(frameCount: UInt32, audioBufferList: UnsafeMutablePointer<AudioBufferList>) -> OSStatus {
         let ablPointer = UnsafeMutableAudioBufferListPointer(audioBufferList)
+        let count = Int(frameCount)
+        guard let first = ablPointer.first, let firstData = first.mData?.assumingMemoryBound(to: Float.self) else {
+            return noErr
+        }
+        let firstCount = min(count, Int(first.mDataByteSize) / MemoryLayout<Float>.size)
+        renderMono(into: firstData, frameCount: firstCount)
+        for buffer in ablPointer.dropFirst() {
+            guard let data = buffer.mData?.assumingMemoryBound(to: Float.self) else { continue }
+            let n = min(firstCount, Int(buffer.mDataByteSize) / MemoryLayout<Float>.size)
+            data.update(from: firstData, count: n)
+        }
+        return noErr
+    }
+
+    /// The synth: `frameCount` mono samples into `samples`, and the beat and amplitude callbacks (main thread).
+    private func renderMono(into samples: UnsafeMutablePointer<Float>, frameCount: Int) {
         let eighthNoteDuration = (60.0 / bpm) * 0.5
         let samplesPerStep = max(1, Int64(sampleRate * eighthNoteDuration))
 
         var rmsSum: Float = 0
         var bassTriggerOccurred = false
 
-        for frame in 0..<Int(frameCount) {
+        for frame in 0..<frameCount {
             let currentSample = sampleCounter
             sampleCounter += 1
 
@@ -435,12 +491,7 @@ public final class RetroEurodanceAudioController {
             let mixed = Float(max(-0.98, min(0.98, kickSample + hatSample + bassSample + leadSample)))
             rmsSum += mixed * mixed
 
-            for buffer in ablPointer {
-                let buf: UnsafeMutableBufferPointer<Float> = UnsafeMutableBufferPointer(buffer)
-                if frame < buf.count {
-                    buf[frame] = mixed
-                }
-            }
+            samples[frame] = mixed
         }
 
         let rms = sqrt(rmsSum / Float(max(1, frameCount)))
@@ -453,8 +504,6 @@ public final class RetroEurodanceAudioController {
             }
             self?.onAmplitudeUpdate?(normAmp, bassEnergy)
         }
-
-        return noErr
     }
 }
 
@@ -614,7 +663,21 @@ public final class RetroSilhouetteEngine: NSObject, ObservableObject {
         isAudioPlaying = audioController.isPlaying
     }
 
+    /// The synth with no audio engine of its own: pull its samples with `renderMusic(into:frameCount:)`, for
+    /// example to mix them into a call's outgoing audio. The audio session is not touched. `stopMusic()` ends it.
+    public func startExternalMusic(sampleRate: Double) {
+        audioController.startExternalSynth(sampleRate: sampleRate)
+        isAudioPlaying = audioController.isPlaying
+    }
+
+    /// The next `frameCount` mono samples (-1...1) of the external synth, or silence. From one thread (an audio
+    /// callback).
+    public func renderMusic(into samples: UnsafeMutablePointer<Float>, frameCount: Int) {
+        audioController.renderExternalSynth(into: samples, frameCount: frameCount)
+    }
+
     public func stopMusic() {
+        audioController.stopExternalSynth()
         audioController.stopInternalSynth()
         isAudioPlaying = false
         activeTrailCount = configuration.baseTrailCount
@@ -1125,8 +1188,20 @@ public struct RetroSilhouetteView: View {
         }
         .sheet(isPresented: $isSettingsPresented) {
             RetroSilhouetteSettingsSheet(engine: engine)
+                .modifier(SettingsSheetDetents())
+        }
+    }
+}
+
+/// The settings sheet's detents and drag indicator: iOS 16 API, so only there (the package supports iOS 15).
+private struct SettingsSheetDetents: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 16.0, *) {
+            content
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
+        } else {
+            content
         }
     }
 }

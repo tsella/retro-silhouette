@@ -16,6 +16,11 @@ let package = Package(
         .target(
             name: "RetroSilhouetteKit",
             path: "ios/Sources/RetroSilhouetteKit"
+        ),
+        .testTarget(
+            name: "RetroSilhouetteKitTests",
+            dependencies: ["RetroSilhouetteKit"],
+            path: "ios/Tests/RetroSilhouetteKitTests"
         )
     ]
 )
