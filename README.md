@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-A real-time, audio-reactive retro silhouette motion-trail engine. The iOS/Swift implementation lives under [`ios/`](./ios) and runs on iOS 15+ through Swift Package Manager. The layout leaves room for further platforms (Android, macOS, WebGL).
+A real-time, audio-reactive retro silhouette motion-trail engine. The iOS/Swift implementation runs on iOS 15+ through Swift Package Manager.
 
 ---
 
@@ -11,26 +11,6 @@ A real-time, audio-reactive retro silhouette motion-trail engine. The iOS/Swift 
 This project is directly inspired by the legendary **1992 Amiga demoscene production *"State of the Art"* by Spaceballs**, which pioneered real-time rotoscoped dancer silhouettes, layered strobe echo trails, hard-cut camera zooms, and high-contrast color palette flashes synchronized to an electronic beat.
 
 * 📺 **Watch the original 1992 Amiga Demo:** [Spaceballs - State of the Art - Amiga Demo (HD 50fps) on YouTube](https://www.youtube.com/watch?v=89wq5EoXy-0)
-
----
-
-## 📁 Repository Structure
-
-```text
-.
-├── README.md                  # Project documentation, credits, and API usage guide
-├── LICENSE                    # MIT License
-├── Package.swift              # Swift Package Manager manifest pointing to ./ios
-├── .gitignore                 # Build artifacts and editor state
-└── ios/
-    └── Sources/
-        └── RetroSilhouetteKit/
-            └── RetroSilhouetteKit.swift   # Self-contained iOS Swift library (SwiftUI + UIKit + CoreVideo)
-    └── Tests/
-        └── RetroSilhouetteKitTests/       # XCTest: the external synth
-```
-
-*(Future platform implementations such as `android/`, `web/`, or `desktop/` can be added cleanly at the root level alongside `ios/`.)*
 
 ---
 
