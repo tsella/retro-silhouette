@@ -311,6 +311,7 @@ async function startCamera() {
   video.srcObject = stream;
   await video.play();
   sourceKind = 'camera';
+  markSource('camera');
   start();
 }
 
@@ -318,6 +319,7 @@ function startPattern() {
   setError('');
   stopStream();
   sourceKind = 'pattern';
+  markSource('pattern');
   start();
 }
 
@@ -356,6 +358,7 @@ document.getElementById('fileInput').addEventListener('change', async (event) =>
   video.src = URL.createObjectURL(file);
   await video.play();
   sourceKind = 'file';
+  markSource('file');
   start();
 });
 
