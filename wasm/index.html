@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RetroSilhouetteKit - WebAssembly demo</title>
+<style>
+  :root {
+    color-scheme: light;
+    --ink: #22242a;
+    --muted: #6b6f7a;
+    --line: #d9dce3;
+    --panel: #f7f8fa;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: var(--ink);
+    background: #fff;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 300px;
+    gap: 24px;
+    padding: 24px;
+    min-height: 100vh;
+  }
+  @media (max-width: 820px) {
+    body { grid-template-columns: minmax(0, 1fr); }
+  }
+  h1 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+  p.lede { margin: 0 0 16px; color: var(--muted); font-size: 13px; }
+  .stage {
+    position: relative;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    aspect-ratio: 1;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+  }
+  canvas#view {
+    width: 100%;
+    height: 100%;
+    image-rendering: pixelated;
+    display: block;
+  }
+  .stage .hint {
+    position: absolute;
+    inset: auto 0 12px 0;
+    text-align: center;
+    font-size: 12px;
+    color: var(--muted);
+    pointer-events: none;
+  }
+  aside {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px;
+    align-self: start;
+  }
+  fieldset { border: 0; padding: 0; margin: 0 0 16px; }
+  legend { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); padding: 0 0 8px; }
+  label.row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; font-size: 13px; margin-bottom: 10px; }
+  label.row span.value { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; }
+  input[type="range"] { grid-column: 1 / -1; width: 100%; accent-color: #5b7fa8; }
+  button {
+    font: inherit; font-size: 13px;
+    padding: 8px 12px; border-radius: 7px;
+    border: 1px solid var(--line);
+    background: #fff; color: var(--ink);
+    cursor: pointer;
+  }
+  button:hover { background: #eef1f6; }
+  button.active { background: #5b7fa8; border-color: #5b7fa8; color: #fff; }
+  button.active:hover { background: #4d6f94; }
+  .buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+  .toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-bottom: 10px; }
+  .stats { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; margin-top: 12px; }
+  .error { color: #a4373a; font-size: 13px; margin-top: 10px; }
+  .credits { font-size: 11px; color: var(--muted); margin-top: 16px; }
+  .credits a { color: inherit; }
+</style>
+</head>
+<body>
+<main>
+  <h1>RetroSilhouetteKit</h1>
+  <p class="lede">WebAssembly core running the silhouette trail pass in C, fed from a camera, a video file, or the built-in test pattern.</p>
+  <div class="stage">
+    <canvas id="view" width="160" height="160"></canvas>
+    <div class="hint" id="hint">Press Start to begin</div>
+  </div>
+</main>
+
+<aside>
+  <fieldset>
+    <legend>Source</legend>
+    <div class="buttons">
+      <button id="startCam">Camera</button>
+      <button id="startPattern">Test pattern</button>
+      <button id="pickFile">Video file</button>
+    </div>
+    <input type="file" id="fileInput" accept="video/*" hidden>
+    <div class="error" id="error"></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Look</legend>
+    <label class="row"><span>Luma threshold</span><span class="value" id="vThreshold">128</span>
+      <input type="range" id="threshold" min="0" max="255" value="128">
+    </label>
+    <label class="row"><span>Trail layers</span><span class="value" id="vTrails">4</span>
+      <input type="range" id="trails" min="1" max="8" value="4">
+    </label>
+    <label class="row"><span>Trail delay (frames)</span><span class="value" id="vDelay">4</span>
+      <input type="range" id="delay" min="1" max="12" value="4">
+    </label>
+    <label class="row"><span>Source resolution</span><span class="value" id="vRes">160</span>
+      <input type="range" id="res" min="64" max="320" step="16" value="160">
+    </label>
+    <div class="toggle"><input type="checkbox" id="invert"><label for="invert">Invert mask (bright subject)</label></div>
+    <div class="toggle"><input type="checkbox" id="gradient" checked><label for="gradient">Gradient background</label></div>
+    <div class="toggle"><input type="checkbox" id="blocky" checked><label for="blocky">Blocky artifacts</label></div>
+    <div class="toggle"><input type="checkbox" id="mirror" checked><label for="mirror">Mirror horizontally</label></div>
+    <div class="toggle"><input type="checkbox" id="cycle" checked><label for="cycle">Cycle palettes</label></div>
+  </fieldset>
+
+  <div class="stats" id="stats">wasm: not loaded</div>
+  <div class="credits">Inspired by Spaceballs, <em>State of the Art</em> (Amiga, 1992). MIT licensed.</div>
+</aside>
+
+<script type="module">
+const PALETTES = [
+  { bg: [[248, 236, 226], [232, 198, 214], [214, 226, 244]], trail: [[196, 96, 110], [176, 132, 92], [122, 148, 186], [150, 122, 168], [96, 138, 128], [204, 148, 96], [130, 126, 160], [168, 104, 120]] },
+  { bg: [[236, 244, 240], [206, 226, 236], [222, 216, 240]], trail: [[86, 132, 148], [120, 156, 122], [148, 124, 168], [92, 116, 140], [176, 154, 118], [116, 140, 116], [162, 132, 148], [100, 152, 160]] },
+  { bg: [[252, 246, 232], [240, 220, 196], [226, 208, 232]], trail: [[176, 104, 84], [148, 118, 92], [120, 108, 140], [196, 140, 96], [132, 148, 112], [170, 118, 130], [108, 128, 148], [188, 152, 120]] }
+];
+
+const view = document.getElementById('view');
+const ctx = view.getContext('2d', { willReadFrequently: false });
+const hint = document.getElementById('hint');
+const stats = document.getElementById('stats');
+const errorBox = document.getElementById('error');
+
+const sourceCanvas = document.createElement('canvas');
+const sourceCtx = sourceCanvas.getContext('2d', { willReadFrequently: true });
+
+let api = null;
+let W = 160;
+let H = 160;
+let frameNum = 0;
+let paletteIndex = 0;
+let running = false;
+let rafId = 0;
+
+// Video source state: a camera stream, a file-backed video, or the pattern.
+let sourceKind = 'none';
+let video = null;
+let stream = null;
+
+const controls = {
+  threshold: document.getElementById('threshold'),
+  trails: document.getElementById('trails'),
+  delay: document.getElementById('delay'),
+  res: document.getElementById('res'),
+  invert: document.getElementById('invert'),
+  gradient: document.getElementById('gradient'),
+  blocky: document.getElementById('blocky'),
+  mirror: document.getElementById('mirror'),
+  cycle: document.getElementById('cycle')
+};
+
+for (const key of ['threshold', 'trails', 'delay', 'res']) {
+  const label = document.getElementById('v' + key[0].toUpperCase() + key.slice(1));
+  const sync = () => { label.textContent = controls[key].value; };
+  controls[key].addEventListener('input', sync);
+  sync();
+}
+
+// The module is a bare freestanding build: no imports, own linear memory.
+async function loadWasm() {
+  const response = await fetch('./retro_silhouette.wasm');
+  if (!response.ok) throw new Error(`wasm fetch failed: ${response.status}`);
+  const { instance } = await WebAssembly.instantiateStreaming(response, {});
+  api = instance.exports;
+  stats.textContent = 'wasm: loaded, ' + (api.memory.buffer.byteLength / 1048576).toFixed(1) + ' MiB memory';
+  return api;
+}
+
+function resizeEngine(resolution) {
+  W = resolution;
+  H = resolution;
+  sourceCanvas.width = W;
+  sourceCanvas.height = H;
+  view.width = W;
+  view.height = H;
+  if (api) api.init_engine(W, H);
+}
+
+function applyPalette(palette) {
+  const ptr = api.get_palette_buffer();
+  const bytes = new Uint8Array(api.memory.buffer, ptr, 33);
+  bytes.set(palette.bg[0], 0);
+  bytes.set(palette.bg[1], 3);
+  bytes.set(palette.bg[2], 6);
+  for (let i = 0; i < 8; i += 1) bytes.set(palette.trail[i], 9 + i * 3);
+}
+
+function drawPattern(t) {
+  sourceCtx.fillStyle = '#f6f3ee';
+  sourceCtx.fillRect(0, 0, W, H);
+  sourceCtx.fillStyle = '#1b1d22';
+  const cx = W * (0.5 + 0.22 * Math.sin(t / 900));
+  const cy = H * (0.5 + 0.16 * Math.cos(t / 1200));
+  const r = W * 0.16;
+  sourceCtx.beginPath();
+  sourceCtx.arc(cx, cy, r, 0, Math.PI * 2);
+  sourceCtx.fill();
+  // A swinging bar keeps the trail layers visible without a camera.
+  sourceCtx.fillRect(W * (0.5 + 0.3 * Math.sin(t / 700)) - W * 0.03, H * 0.62, W * 0.06, H * 0.3);
+}
+
+function drawSource() {
+  if (sourceKind === 'pattern') {
+    drawPattern(performance.now());
+    return;
+  }
+  if (!video || video.readyState < 2) return;
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  if (!vw || !vh) return;
+  const scale = Math.max(W / vw, H / vh);
+  const dw = vw * scale;
+  const dh = vh * scale;
+  sourceCtx.drawImage(video, (W - dw) / 2, (H - dh) / 2, dw, dh);
+}
+
+function render() {
+  if (!running || !api) return;
+  drawSource();
+
+  if (controls.mirror.checked) {
+    // Flip the source copy, not the output, so trail history stays coherent.
+    sourceCtx.save();
+    sourceCtx.scale(-1, 1);
+    sourceCtx.drawImage(sourceCanvas, -W, 0);
+    sourceCtx.restore();
+  }
+
+  const image = sourceCtx.getImageData(0, 0, W, H);
+  const inputPtr = api.get_input_buffer();
+  new Uint8Array(api.memory.buffer, inputPtr, W * H * 4).set(image.data);
+
+  if (controls.cycle.checked && frameNum % 48 === 0) {
+    paletteIndex = (paletteIndex + 1) % PALETTES.length;
+  }
+  applyPalette(PALETTES[paletteIndex]);
+
+  api.render_frame(
+    Number(controls.threshold.value),
+    controls.invert.checked ? 1 : 0,
+    Number(controls.trails.value),
+    Number(controls.delay.value),
+    controls.gradient.checked ? 1 : 0,
+    controls.blocky.checked ? 1 : 0,
+    frameNum
+  );
+
+  const outputPtr = api.get_output_buffer();
+  const pixels = new Uint8ClampedArray(api.memory.buffer, outputPtr, W * H * 4);
+  ctx.putImageData(new ImageData(pixels.slice(), W, H), 0, 0);
+
+  frameNum += 1;
+  rafId = requestAnimationFrame(render);
+}
+
+function start() {
+  if (running) return;
+  running = true;
+  hint.style.display = 'none';
+  rafId = requestAnimationFrame(render);
+}
+
+function stop() {
+  running = false;
+  cancelAnimationFrame(rafId);
+  hint.style.display = '';
+  hint.textContent = 'Stopped';
+}
+
+function setError(message) {
+  errorBox.textContent = message || '';
+}
+
+async function startCamera() {
+  setError('');
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 960 }, height: { ideal: 960 } },
+      audio: false
+    });
+  } catch (err) {
+    setError('Camera unavailable (' + err.name + '). Use the test pattern or a video file.');
+    return;
+  }
+  if (video) { video.pause(); video.srcObject = null; }
+  video = document.createElement('video');
+  video.playsInline = true;
+  video.muted = true;
+  video.srcObject = stream;
+  await video.play();
+  sourceKind = 'camera';
+  start();
+}
+
+function startPattern() {
+  setError('');
+  stopStream();
+  sourceKind = 'pattern';
+  start();
+}
+
+function stopStream() {
+  if (stream) {
+    for (const track of stream.getTracks()) track.stop();
+    stream = null;
+  }
+}
+
+const sourceButtons = {
+  camera: document.getElementById('startCam'),
+  pattern: document.getElementById('startPattern'),
+  file: document.getElementById('pickFile')
+};
+
+function markSource(kind) {
+  for (const [name, button] of Object.entries(sourceButtons)) {
+    button.classList.toggle('active', name === kind);
+  }
+}
+
+document.getElementById('startCam').addEventListener('click', startCamera);
+document.getElementById('startPattern').addEventListener('click', startPattern);
+document.getElementById('pickFile').addEventListener('click', () => document.getElementById('fileInput').click());
+
+document.getElementById('fileInput').addEventListener('change', async (event) => {
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+  setError('');
+  stopStream();
+  video = document.createElement('video');
+  video.playsInline = true;
+  video.muted = true;
+  video.loop = true;
+  video.src = URL.createObjectURL(file);
+  await video.play();
+  sourceKind = 'file';
+  start();
+});
+
+controls.res.addEventListener('change', () => {
+  resizeEngine(Number(controls.res.value));
+});
+
+resizeEngine(160);
+loadWasm().catch((err) => {
+  stats.textContent = 'wasm: failed to load';
+  setError('Could not load retro_silhouette.wasm: ' + err.message + '. Run the page from a local web server.');
+});
+</script>
+</body>
+</html>
